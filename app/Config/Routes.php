@@ -12,3 +12,4 @@ $routes->group('api', function($routes) {
 });
 
 $routes->post('auth/register', 'Auth::register');
+$routes->post('auth/login', 'Auth::login');
