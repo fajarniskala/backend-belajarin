@@ -88,4 +88,42 @@ class Auth extends ResourceController
             return $this->failServerError('DB Error: ' . $e->getMessage());
         }
     }
+
+    public function login()
+    {
+        // Header CORS
+        header('Access-Control-Allow-Origin: *');
+        header('Access-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE');
+        header('Access-Control-Allow-Headers: Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With');
+
+        if ($this->request->getMethod() === 'OPTIONS') {
+            return $this->response->setStatusCode(200);
+        }
+
+        $email    = $this->request->getVar('email');
+        $password = $this->request->getVar('password');
+
+        if (empty($email) || empty($password)) {
+            return $this->failValidationErrors('Email dan Password wajib diisi.');
+        }
+
+        $db = \Config\Database::connect();
+        $user = $db->table('users')->where('email', $email)->get()->getRowArray();
+
+        // Cek apakah user ada dan password cocok (sesuai skema plain text database saat ini)
+        if ($user && $user['password'] === $password) {
+            return $this->respond([
+                'status'  => 200,
+                'message' => 'Login berhasil',
+                'data'    => [
+                    'id'    => $user['id'],
+                    'name'  => $user['name'],
+                    'email' => $user['email'],
+                    'role'  => $user['role'], // <-- Ini kunci agar Flutter tahu rutenya
+                ]
+            ]);
+        }
+
+        return $this->failUnauthorized('Email atau password salah');
+    }
 }
