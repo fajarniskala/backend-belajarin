@@ -16,17 +16,17 @@ class Dashboard extends ResourceController
         header('Access-Control-Allow-Headers: Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With');
 
         $db = \Config\Database::connect();
-        
+
         // --- DATA PENGGUNA ---
         $builderUsers = $db->table('users');
-        $guruCount = $builderUsers->where('role', 'guru')->countAllResults();
-        $parentCount = $builderUsers->where('role', 'parent')->countAllResults();
-        $childCount = $builderUsers->where('role', 'child')->countAllResults();
-        $totalUser = $guruCount + $parentCount + $childCount;
+        $guruCount    = $builderUsers->where('role', 'guru')->countAllResults();
+        $parentCount  = $builderUsers->where('role', 'parent')->countAllResults();
+        $childCount   = $builderUsers->where('role', 'child')->countAllResults();
+        $totalUser    = $guruCount + $parentCount + $childCount;
 
         // --- DATA E-BOOK ---
         $builderEbooks = $db->table('ebooks');
-        $totalEbooks = $builderEbooks->countAllResults();
+        $totalEbooks   = $builderEbooks->countAllResults();
 
         // --- DATA AKTIVITAS E-BOOK TERBARU ---
         $builderRecent = $db->table('ebooks');
@@ -45,13 +45,13 @@ class Dashboard extends ResourceController
             'child'        => $childCount,
             'total'        => $totalUser,
             'total_ebooks' => $totalEbooks,
-            'recent_ebook' => $recentEbook // <-- Data aktivitas dikirim ke Flutter
+            'recent_ebook' => $recentEbook, // <-- Data aktivitas dikirim ke Flutter
         ];
 
         return $this->respond([
             'status'  => 200,
             'message' => 'Berhasil mengambil data statistik',
-            'data'    => $data
+            'data'    => $data,
         ], 200);
     }
 }

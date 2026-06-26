@@ -9,7 +9,15 @@ $routes->get('ebook/getEbooksByChild/(:num)', 'EbookController::getEbooksByChild
 
 $routes->group('api', function($routes) {
     $routes->get('dashboard/user-stats', 'Dashboard::getUserStats');
+    
+    //Guru
+    $routes->get('gurucontroller/guru-stats', 'GuruController::guruStats'); 
+    $routes->post('gurucontroller/add-student', 'GuruController::addStudent');
+    $routes->options('gurucontroller/add-student', 'GuruController::addStudent');  
+    $routes->get('gurucontroller/parents', 'GuruController::getParents');
 });
+
+
 
 $routes->post('auth/register', 'Auth::register');
 $routes->post('auth/login', 'Auth::login');
