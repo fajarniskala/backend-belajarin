@@ -1,5 +1,4 @@
 <?php
-
 namespace Config;
 
 use CodeIgniter\Config\Filters as BaseFilters;
@@ -25,6 +24,7 @@ class Filters extends BaseFilters
         'forcehttps'    => ForceHTTPS::class,
         'pagecache'     => PageCache::class,
         'performance'   => PerformanceMetrics::class,
+        'cors'          => \App\Filters\Cors::class,
     ];
 
     /**
@@ -33,22 +33,23 @@ class Filters extends BaseFilters
     public array $required = [
         'before' => [
             // 'forcehttps', // <-- SUDAH DINONAKTIFKAN agar HTTP bisa diakses
-            'pagecache',  
+            'pagecache',
         ],
-        'after' => [
-            'pagecache',   
-            'performance', 
-            'toolbar',     
+        'after'  => [
+            'pagecache',
+            'performance',
+            'toolbar',
         ],
     ];
 
     public array $globals = [
         'before' => [
+            'cors',
             // 'honeypot',
             // 'csrf',
             // 'invalidchars',
         ],
-        'after' => [
+        'after'  => [
             // 'honeypot',
             // 'secureheaders',
         ],

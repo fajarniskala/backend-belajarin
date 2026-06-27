@@ -112,4 +112,157 @@ class GuruController extends ResourceController
         return $this->fail('Data tidak lengkap atau tidak valid', 400);
     }
 
+    public function addModule()
+    {
+        // Pengaturan CORS untuk Flutter
+        header('Access-Control-Allow-Origin: *');
+        header('Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With');
+        header('Access-Control-Allow-Methods: POST, OPTIONS');
+
+        if ($this->request->getMethod() === 'options') {
+            return $this->response->setStatusCode(200);
+        }
+
+        $db = \Config\Database::connect();
+
+        // Mengambil data teks dari Multipart Request menggunakan getPost()
+        $guruId      = $this->request->getPost('guru_id');
+        $categoryId  = $this->request->getPost('category_id');
+        $title       = $this->request->getPost('title');
+        $description = $this->request->getPost('description');
+        $level       = $this->request->getPost('level');
+        $totalPoints = $this->request->getPost('total_points');
+        $orderSeq    = $this->request->getPost('order_seq');
+
+        // Proses penanganan file PDF
+        $pdfFile  = $this->request->getFile('file_pdf');
+        $fileName = null;
+
+        if ($pdfFile && $pdfFile->isValid() && ! $pdfFile->hasMoved()) {
+            // Membuat nama acak baru agar nama file tidak bentrok di server
+            $fileName = $pdfFile->getRandomName();
+
+            // Memindahkan file ke folder: public/uploads/modules/
+            $pdfFile->move(ROOTPATH . 'public/uploads/modules', $fileName);
+        }
+
+        // Susun data untuk di-insert ke database
+        $data = [
+            'guru_id'      => $guruId,
+            'category_id'  => $categoryId,
+            'title'        => $title,
+            'description'  => $description,
+            'level'        => $level,
+            'total_points' => $totalPoints,
+            'order_seq'    => $orderSeq,
+            'file_pdf'     => $fileName, // Simpan nama file acak ke database
+            'created_at'   => date('Y-m-d H:i:s'),
+            'updated_at'   => date('Y-m-d H:i:s'),
+        ];
+
+        // Jalankan Query Insert
+        $db->table('modules')->insert($data);
+
+        return $this->respond([
+            'status'    => 201,
+            'message'   => 'Modul dan file PDF berhasil disimpan!',
+            'file_name' => $fileName,
+        ], 201);
+    }
+
+    public function getCategories()
+    {
+        // Pengaturan CORS
+        header('Access-Control-Allow-Origin: *');
+
+        $db = \Config\Database::connect();
+
+        // Ambil id dan name dari tabel categories, urutkan berdasarkan ID
+        $categories = $db->table('categories')
+            ->select('id, name')
+            ->orderBy('id', 'ASC')
+            ->get()
+            ->getResultArray();
+
+        return $this->respond([
+            'status' => 200,
+            'data'   => $categories,
+        ]);
+    }
+
+    // 1. Ambil daftar modul untuk Dropdown di Flutter
+    public function getGuruModules($guruId)
+    {
+        header('Access-Control-Allow-Origin: *');
+        $db = \Config\Database::connect();
+
+        $modules = $db->table('modules')
+            ->select('id, title')
+            ->where('guru_id', $guruId)
+            ->orderBy('id', 'DESC')
+            ->get()
+            ->getResultArray();
+
+        return $this->respond([
+            'status' => 200,
+            'data'   => $modules,
+        ]);
+    }
+
+// 2. Simpan Tugas Baru ke Tabel tasks
+    public function addTask()
+    {
+
+        if ($this->request->getMethod() === 'options') {
+            return $this->response->setStatusCode(200);
+        }
+
+        $db   = \Config\Database::connect();
+        $json = $this->request->getJSON();
+
+        if ($json) {
+            $data = [
+                'module_id'   => $json->module_id,
+                'guru_id'     => $json->guru_id,
+                'title'       => $json->title,
+                'description' => $json->description,
+                'due_date'    => $json->due_date ? date('Y-m-d H:i:s', strtotime($json->due_date)) : null,
+                'created_at'  => date('Y-m-d H:i:s'),
+                'updated_at'  => date('Y-m-d H:i:s'),
+            ];
+
+            $db->table('tasks')->insert($data);
+
+            return $this->respond([
+                'status'  => 201,
+                'message' => 'Tugas baru berhasil ditambahkan!',
+            ], 201);
+        }
+
+        return $this->fail('Data tidak valid', 400);
+    }
+
+    public function getTaskRecap($guruId)
+    {
+        header('Access-Control-Allow-Origin: *');
+        $db = \Config\Database::connect();
+
+        // Query untuk mengambil tugas dan menghitung submisi secara otomatis
+        $builder = $db->table('tasks t');
+        $builder->select('t.id, t.title, t.due_date,
+                      COUNT(ts.id) as total_submissions,
+                      SUM(CASE WHEN ts.status = "pending" THEN 1 ELSE 0 END) as pending_count');
+        $builder->join('task_submissions ts', 'ts.task_id = t.id', 'left');
+        $builder->where('t.guru_id', $guruId);
+        $builder->groupBy('t.id');
+        $builder->orderBy('t.created_at', 'DESC');
+
+        $recap = $builder->get()->getResultArray();
+
+        return $this->respond([
+            'status' => 200,
+            'data'   => $recap,
+        ]);
+    }
+
 }
