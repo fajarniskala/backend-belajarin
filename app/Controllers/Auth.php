@@ -57,7 +57,7 @@ class Auth extends ResourceController
             $nip      = $this->getInput('nip');
             $subject  = $this->getInput('subject_specialization');
             $bio      = $this->getInput('bio');
-
+            $classGrade = $this->getInput('class_grade');
             // Validasi wajib
             if (empty($name) || empty($email) || empty($password)) {
                 return $this->jsonResponse([
@@ -120,6 +120,7 @@ class Auth extends ResourceController
                     'nip'                    => $nip,
                     'subject_specialization' => $subject,
                     'bio'                    => $bio,
+                    'class_grade'            => $classGrade,
                 ]);
             }
 
