@@ -1,5 +1,4 @@
 <?php
-
 namespace App\Controllers;
 
 use CodeIgniter\API\ResponseTrait;
@@ -10,63 +9,133 @@ class SiswaController extends BaseController
 
     public function submitTask()
     {
-        // Karena Anda sudah pakai Filter CORS global, tidak perlu header() di sini lagi!
-        $db = \Config\Database::connect();
+        // 1. ATUR HEADER CORS agar request multipart-form dari Flutter tidak diblokir
+        header("Access-Control-Allow-Origin: *");
+        header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With");
+        header("Access-Control-Allow-Methods: POST, OPTIONS");
 
-        $taskId         = $this->request->getPost('task_id');
-        $studentId      = $this->request->getPost('student_id');
-        $textSubmission = $this->request->getPost('text_submission');
-        $file           = $this->request->getFile('file_submission');
-
-        $fileName = null;
-
-        // Proses upload file jika anak melampirkan file
-        if ($file && $file->isValid() && ! $file->hasMoved()) {
-            $fileName = $file->getRandomName();
-            // Pastikan folder writable/uploads/submissions sudah dibuat!
-            $file->move(WRITEPATH . 'uploads/submissions', $fileName);
+        if ($this->request->getMethod() === 'options') {
+            return $this->response->setStatusCode(200);
         }
 
-        $data = [
-            'task_id'         => $taskId,
-            'student_id'      => $studentId,
-            'text_submission' => empty($textSubmission) ? null : $textSubmission,
-            'status'          => 'pending',
-            'submitted_at'    => date('Y-m-d H:i:s'),
-        ];
+        try {
+            $db = \Config\Database::connect();
 
-        if ($fileName) {
-            $data['file_submission'] = $fileName;
+            // 2. TANGKAP INPUT DATA TEXT DARI FLUTTER
+            $taskId    = $this->request->getPost('task_id');
+            $studentId = $this->request->getPost('student_id');
+            $textSub   = $this->request->getPost('text_submission');
+
+            if (empty($taskId) || empty($studentId)) {
+                return $this->response->setStatusCode(400)->setJSON([
+                    'status'  => 400,
+                    'message' => 'Parameter task_id dan student_id wajib disertakan.',
+                ]);
+            }
+
+            // 3. CEK DEADLINE DARI TABEL TASKS
+            $task = $db->table('tasks')->where('id', $taskId)->get()->getRowArray();
+
+            // Antisipasi fleksibel: mengecek apakah nama kolom di tabelmu 'deadline' atau 'due_date'
+            $deadline = $task['deadline'] ?? $task['due_date'] ?? null;
+
+            // 4. TENTUKAN STATUS KUMPUL (Jika melewati batas waktu set 'late', jika tidak set 'pending')
+            $now    = date('Y-m-d H:i:s');
+            $status = 'pending';
+            if ($deadline && $now > $deadline) {
+                $status = 'late';
+            }
+
+            // 5. PROSES UPLOAD FILE (PDF / FOTO JAWABAN)
+            $fileName = null;
+            $file     = $this->request->getFile('file_submission');
+
+            if ($file && $file->isValid() && ! $file->hasMoved()) {
+                // Buat nama berkas acak yang unik agar tidak saling menimpa
+                $fileName = $file->getRandomName();
+                // Pindahkan file ke folder aman di dalam writable path sesuai setup awal kita
+                $file->move(WRITEPATH . 'uploads/submissions/', $fileName);
+            }
+
+            // 6. CEK APAKAH SISWA SUDAH PERNAH MENGUMPULKAN (Logika Revisi)
+            $existing = $db->table('task_submissions')
+                ->where('task_id', $taskId)
+                ->where('student_id', $studentId)
+                ->get()->getRowArray();
+
+            // Susun cetak data payload ke database
+            $data = [
+                'text_submission' => $textSub,
+                'status'          => $status,
+                'updated_at'      => $now,
+            ];
+
+            // Jika ada file baru yang diunggah, sisipkan nama filenya
+            if ($fileName !== null) {
+                // Hapus berkas lama dari disk server jika siswa melakukan pengiriman ulang (revisi)
+                if ($existing && ! empty($existing['file_submission'])) {
+                    $oldFilePath = WRITEPATH . 'uploads/submissions/' . $existing['file_submission'];
+                    if (file_exists($oldFilePath)) {
+                        unlink($oldFilePath);
+                    }
+                }
+                $data['file_submission'] = $fileName;
+            }
+
+            // 7. EKSEKUSI OPERASI QUERY KE DATABASE task_submissions
+            if ($existing) {
+                // Jika data sudah ada, lakukan UPDATE (Reset nilai jadi NULL agar guru menilai ulang revisinya)
+                $data['score'] = null;
+                $db->table('task_submissions')->where('id', $existing['id'])->update($data);
+                $message = 'Tugas (Revisi) berhasil diperbarui! 🎉';
+            } else {
+                // Jika pengumpulan pertama kali, lakukan INSERT data baru
+                $data['task_id']      = $taskId;
+                $data['student_id']   = $studentId;
+                $data['score']        = null;
+                $data['submitted_at'] = $now;
+
+                $db->table('task_submissions')->insert($data);
+                $message = 'Hore! Jawaban berhasil dikirim! 🎉';
+            }
+
+            // Kembalikan response sukses berbentuk JSON bersih ke Flutter
+            return $this->response->setStatusCode(200)->setJSON([
+                'status'  => 200,
+                'message' => $message,
+            ]);
+
+        } catch (\Exception $e) {
+            // Tangkap crash crash internal dan kembalikan dalam format JSON agar app Flutter tidak patah
+            return $this->response->setStatusCode(500)->setJSON([
+                'status'  => 500,
+                'message' => 'Terjadi kesalahan internal server: ' . $e->getMessage(),
+            ]);
         }
-
-        // Cek apakah siswa sudah pernah mengirim jawaban sebelumnya
-        $existing = $db->table('task_submissions')
-            ->where(['task_id' => $taskId, 'student_id' => $studentId])
-            ->get()->getRow();
-
-        if ($existing) {
-            // Update (Revisi jawaban)
-            $db->table('task_submissions')->where('id', $existing->id)->update($data);
-        } else {
-            // Insert baru
-            $db->table('task_submissions')->insert($data);
-        }
-
-        return $this->respondCreated(['status' => 201, 'message' => 'Tugas berhasil dikumpulkan']);
     }
 
     public function getPendingTasks($studentId)
     {
         $db = \Config\Database::connect();
 
-        // Query: Ambil semua tugas dari tabel 'tasks',
+        // 1. Ambil data siswa untuk mengetahui guru_id-nya terlebih dahulu
+        $student = $db->table('users')->where('id', $studentId)->get()->getRow();
+
+        if (! $student) {
+            return $this->failNotFound('Siswa tidak ditemukan');
+        }
+
+        $guruId = $student->guru_id;
+
+        // 2. Query: Ambil tugas dari tabel 'tasks' HANYA MILIK guru_id siswa ini,
         // KECUALI tugas yang ID-nya sudah ada di 'task_submissions' untuk student_id ini.
         $sql = "SELECT t.* FROM tasks t
-            WHERE t.id NOT IN (
+            WHERE t.guru_id = ? AND t.id NOT IN (
                 SELECT task_id FROM task_submissions WHERE student_id = ?
             ) ORDER BY t.created_at DESC";
 
-        $tasks = $db->query($sql, [$studentId])->getResultArray();
+        // Masukkan $guruId dan $studentId secara berurutan menggantikan tanda "?"
+        $tasks = $db->query($sql, [$guruId, $studentId])->getResultArray();
 
         return $this->respond([
             'status' => 200,
@@ -111,21 +180,32 @@ class SiswaController extends BaseController
             ->orderBy('erl.last_read_at', 'DESC')
             ->get()->getRowArray();
 
-        // 2. Jika belum pernah membaca apapun, berikan e-book pertama sebagai default awal
+        // 2. Jika belum pernah membaca apapun, berikan e-book pertama HANYA DARI GURUNYA sebagai default awal
         if (! $log) {
-            $ebook = $db->table('ebooks')->get()->getRowArray();
-            if ($ebook) {
-                $log = [
-                    'id'               => null,
-                    'user_id'          => $studentId,
-                    'ebook_id'         => $ebook['id'],
-                    'last_page'        => 1,
-                    'total_pages_read' => 0,
-                    'is_finished'      => 0,
-                    'title'            => $ebook['title'],
-                    'total_pages'      => $ebook['total_pages'],
-                    'file_url'         => $ebook['file_url'],
-                ];
+            $student = $db->table('users')->where('id', $studentId)->get()->getRow();
+
+            if ($student) {
+                // Filter cari buku yang diupload oleh guru anak ini
+                $ebook = $db->table('ebooks')
+                    ->where('is_active', 1)
+                    ->where('uploaded_by', $student->guru_id)
+                    ->get()->getRowArray();
+
+                if ($ebook) {
+                    $log = [
+                        'id'               => null,
+                        'user_id'          => $studentId,
+                        'ebook_id'         => $ebook['id'],
+                        'last_page'        => 1,
+                        'total_pages_read' => 0,
+                        'is_finished'      => 0,
+                        'title'            => $ebook['title'],
+                        'total_pages'      => $ebook['total_pages'],
+                        'file_url'         => $ebook['file_url'],
+                    ];
+                } else {
+                    return $this->respond(['status' => 200, 'data' => null]);
+                }
             } else {
                 return $this->respond(['status' => 200, 'data' => null]);
             }
@@ -143,41 +223,51 @@ class SiswaController extends BaseController
         $lastPage   = $this->request->getPost('last_page');
         $totalPages = $this->request->getPost('total_pages');
 
+        // --- TAMBAHAN BARU: Menangkap durasi (dalam menit) ---
+        $duration = (int) $this->request->getPost('reading_duration');
+
         $isFinished = ($lastPage >= $totalPages) ? 1 : 0;
 
-        $data = [
-            'user_id'      => $studentId,
-            'ebook_id'     => $ebookId,
-            'last_page'    => $lastPage,
-            'is_finished'  => $isFinished,
-            'last_read_at' => date('Y-m-d H:i:s'),
-        ];
-
+        // Cek apakah anak sudah pernah membaca buku ini
         $existing = $db->table('ebook_reading_logs')
             ->where(['user_id' => $studentId, 'ebook_id' => $ebookId])
             ->get()->getRow();
 
         if ($existing) {
+            // Jika sudah pernah, tambahkan (akumulasikan) waktu baca lama + sesi baru
+            $newDuration = $existing->reading_duration + $duration;
+
+            $data = [
+                'last_page'        => $lastPage,
+                'is_finished'      => $isFinished,
+                'reading_duration' => $newDuration, // Simpan total waktu ke DB
+                'last_read_at'     => date('Y-m-d H:i:s'),
+            ];
             $db->table('ebook_reading_logs')->where('id', $existing->id)->update($data);
         } else {
-            $data['started_at'] = date('Y-m-d H:i:s');
+            // Jika ini pertama kali anak membaca buku ini
+            $data = [
+                'user_id'          => $studentId,
+                'ebook_id'         => $ebookId,
+                'last_page'        => $lastPage,
+                'is_finished'      => $isFinished,
+                'reading_duration' => $duration, // Simpan waktu perdana
+                'last_read_at'     => date('Y-m-d H:i:s'),
+                'started_at'       => date('Y-m-d H:i:s'),
+            ];
             $db->table('ebook_reading_logs')->insert($data);
         }
 
         // ================= LOGIKA UTAMA PEMBAGIAN POIN MEMBACA =================
         if ($isFinished == 1) {
-            // 1. Hitung berapa total e-book yang SUDAH SELESAI dibaca oleh anak ini
             $totalFinishedEbooks = $db->table('ebook_reading_logs')
                 ->where(['user_id' => $studentId, 'is_finished' => 1])
                 ->countAllResults();
 
-            // 2. Cek apakah jumlahnya memenuhi syarat untuk mendapatkan Badge "Pembaca Pertama" (1 buku)
             if ($totalFinishedEbooks == 1) {
-                $this->triggerBadgeReward($studentId, 1); // 1 adalah ID Badge Pembaca Pertama
-            }
-            // 3. Cek apakah memenuhi syarat untuk Badge "Kutu Buku" (5 buku)
-            else if ($totalFinishedEbooks == 5) {
-                $this->triggerBadgeReward($studentId, 2); // 2 adalah ID Badge Kutu Buku
+                $this->triggerBadgeReward($studentId, 1);
+            } else if ($totalFinishedEbooks == 5) {
+                $this->triggerBadgeReward($studentId, 2);
             }
         }
 
@@ -284,13 +374,24 @@ class SiswaController extends BaseController
         ]);
     }
 
-    public function getAllEbooks()
+    public function getAllEbooks($studentId = null)
     {
         $db = \Config\Database::connect();
 
-        // Ambil semua buku yang aktif di database
+        if (! $studentId) {
+            return $this->fail('Parameter student_id diperlukan', 400);
+        }
+
+        // Cari siapa guru_id dari anak ini
+        $student = $db->table('users')->where('id', $studentId)->get()->getRow();
+        if (! $student) {
+            return $this->failNotFound('Siswa tidak ditemukan');
+        }
+
+        // Ambil semua buku yang aktif DAN diupload oleh guru anak tersebut
         $ebooks = $db->table('ebooks')
             ->where('is_active', 1)
+            ->where('uploaded_by', $student->guru_id)
             ->orderBy('id', 'DESC')
             ->get()->getResultArray();
 
@@ -327,17 +428,59 @@ class SiswaController extends BaseController
     {
         $db = \Config\Database::connect();
 
-        $sql = "SELECT e.*, erl.last_page, erl.is_finished 
+        $student = $db->table('users')->where('id', $studentId)->get()->getRow();
+        if (! $student) {
+            return $this->failNotFound('Siswa tidak ditemukan');
+        }
+
+        // Tambahkan filter "e.uploaded_by = ?" untuk memastikan e-book milik gurunya
+        $sql = "SELECT e.*, erl.last_page, erl.is_finished
                 FROM ebooks e
                 LEFT JOIN ebook_reading_logs erl ON e.id = erl.ebook_id AND erl.user_id = ?
-                WHERE e.is_active = 1
+                WHERE e.is_active = 1 AND e.uploaded_by = ?
                 ORDER BY e.id DESC";
 
-        $books = $db->query($sql, [$studentId])->getResultArray();
+        // Masukkan parameter $studentId dan $guru_id
+        $books = $db->query($sql, [$studentId, $student->guru_id])->getResultArray();
 
         return $this->respond([
             'status' => 200,
-            'data'   => $books
+            'data'   => $books,
         ]);
+    }
+
+    public function streamModul($fileName = null)
+    {
+        // 1. Izinkan CORS agar Flutter bisa mengakses file tanpa diblokir
+        header("Access-Control-Allow-Origin: *");
+        header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With");
+        header("Access-Control-Allow-Methods: GET, OPTIONS");
+
+        // Tangani request OPTIONS dari Flutter
+        if ($this->request->getMethod() === 'options') {
+            return $this->response->setStatusCode(200);
+        }
+
+        if (! $fileName) {
+            return $this->fail('Nama file tidak diberikan', 400);
+        }
+
+        // 2. AMBIL DARI FOLDER PUBLIC SESUAI LOKASIMU
+        // FCPATH otomatis mengarah ke E:\Dev\Flutter PMO\Final Project\backend\belajarin-api\public\
+        $path = FCPATH . 'uploads/modules/' . $fileName;
+
+        // Cek apakah file fisiknya benar-benar ada
+        if (! file_exists($path)) {
+            return $this->failNotFound('File PDF tidak ditemukan di path: ' . $path);
+        }
+
+        // 3. Baca isi file fisik PDF
+        $file = file_get_contents($path);
+
+        // 4. Atur header Content-Type agar Flutter tahu bahwa ini adalah file PDF murni
+        return $this->response
+            ->setHeader('Content-Type', 'application/pdf')
+            ->setHeader('Content-Disposition', 'inline; filename="' . $fileName . '"')
+            ->setBody($file);
     }
 }
