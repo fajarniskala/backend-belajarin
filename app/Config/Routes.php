@@ -57,6 +57,7 @@ $routes->get('siswa/all-ebooks/(:num)', 'SiswaController::getAllEbooks/$1');
 $routes->get('siswa/modules-by-category/(:num)/(:num)', 'SiswaController::getModulesByCategory/$1/$2');
 $routes->get('siswa/library-books/(:num)', 'SiswaController::getLibraryBooks/$1');
 $routes->get('api/siswa/stream-modul/(:segment)', 'SiswaController::streamModul/$1');
+$routes->get('siswa/achievements/(:num)', 'SiswaController::getAchievements/$1');
 
 $routes->options('auth/register', 'Auth::register');
 $routes->post('auth/register', 'Auth::register');

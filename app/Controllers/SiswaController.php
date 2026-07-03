@@ -483,4 +483,38 @@ class SiswaController extends BaseController
             ->setHeader('Content-Disposition', 'inline; filename="' . $fileName . '"')
             ->setBody($file);
     }
+    public function getAchievements($studentId = null)
+    {
+        header("Access-Control-Allow-Origin: *");
+        header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With");
+        header("Access-Control-Allow-Methods: GET, OPTIONS");
+
+        if ($this->request->getMethod() === 'options') {
+            return $this->response->setStatusCode(200);
+        }
+
+        if (! $studentId) {
+            return $this->fail('Parameter student_id diperlukan', 400);
+        }
+
+        $db = \Config\Database::connect();
+
+        // Query gabungan (LEFT JOIN) untuk mengambil SEMUA badge
+        // dan mengecek apakah ID anak ada di tabel user_achievements
+        $sql = "
+        SELECT a.*,
+               IF(ua.id IS NOT NULL, 1, 0) as unlocked,
+               ua.earned_at
+        FROM achievements a
+        LEFT JOIN user_achievements ua ON a.id = ua.achievement_id AND ua.user_id = ?
+        ORDER BY a.points_reward ASC
+    ";
+
+        $achievements = $db->query($sql, [$studentId])->getResultArray();
+
+        return $this->respond([
+            'status' => 200,
+            'data'   => $achievements,
+        ]);
+    }
 }
