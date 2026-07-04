@@ -165,4 +165,38 @@ class OrtuController extends BaseController
             'riwayat'      => $riwayat,
         ]);
     }
+
+    // ======================================================================
+// UPDATE DATA PROFIL DARI SISI HALAMAN ORANG TUA (PARENT)
+// ======================================================================
+    public function updateParentProfile()
+    {
+        header("Access-Control-Allow-Origin: *");
+        header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With");
+        header("Access-Control-Allow-Methods: POST, OPTIONS");
+
+        if ($this->request->getMethod() === 'options') {
+            return $this->response->setStatusCode(200);
+        }
+
+        $id       = $this->request->getPost('id');
+        $email    = $this->request->getPost('email');
+        $password = $this->request->getPost('password');
+
+        if (! $id || ! $email || ! $password) {
+            return $this->fail('Data pembaruan data wali tidak lengkap!', 400);
+        }
+
+        $db = \Config\Database::connect();
+        $db->table('users')->where('id', $id)->update([
+            'email'      => $email,
+            'password'   => $password, // Format string biasa sesuai konfigurasi DB kamu
+            'updated_at' => date('Y-m-d H:i:s'),
+        ]);
+
+        return $this->respond([
+            'status'  => 200,
+            'message' => 'Profil wali murid berhasil diperbarui',
+        ], 200);
+    }
 }

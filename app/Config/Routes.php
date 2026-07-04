@@ -9,6 +9,22 @@ $routes->get('ebook/getEbooksByChild/(:num)', 'EbookController::getEbooksByChild
 
 $routes->group('api', function ($routes) {
     $routes->get('dashboard/user-stats', 'Dashboard::getUserStats');
+    $routes->get('dashboard/teachers', 'Dashboard::teachers');
+    $routes->post('dashboard/addTeacher', 'Dashboard::addTeacher');
+    $routes->post('dashboard/updateTeacher', 'Dashboard::updateTeacher');
+    $routes->post('dashboard/deleteTeacher', 'Dashboard::deleteTeacher');
+
+    //ortu admin view read delete
+    $routes->get('dashboard/parents', 'Dashboard::parents');
+    $routes->post('dashboard/updateParent', 'Dashboard::updateParent');
+    $routes->post('dashboard/deleteParent', 'Dashboard::deleteParent');
+
+    //anak admin view read delete
+    $routes->get('dashboard/students', 'Dashboard::students');
+    $routes->post('dashboard/updateStudent', 'Dashboard::updateStudent');
+    $routes->post('dashboard/deleteStudent', 'Dashboard::deleteStudent');
+
+    $routes->get('dashboard/getSystemReport', 'Dashboard::getSystemReport');
 
     //Guru
     $routes->get('gurucontroller/guru-stats', 'GuruController::guruStats');
@@ -34,11 +50,13 @@ $routes->group('api', function ($routes) {
     $routes->get('gurucontroller/grades-recap/(:num)', 'GuruController::getGuruGradesRecap/$1');
     $routes->post('gurucontroller/upload-ebook', 'GuruController::uploadEbook');
     $routes->options('gurucontroller/upload-ebook', 'GuruController::uploadEbook');
+    $routes->post('gurucontroller/update-profile', 'GuruController::updateProfile');
 
     //ortu
     $routes->get('ortucontroller/child-reading/(:num)', 'OrtuController::getChildActiveReading/$1');
     $routes->get('ortucontroller/riwayat-baca/(:num)', 'OrtuController::getRiwayatBaca/$1');
     $routes->get('ortucontroller/dashboard/(:num)', 'OrtuController::dashboard/$1');
+    $routes->post('ortucontroller/updateParentProfile', 'OrtuController::updateParentProfile');
 
     //Categories
     $routes->get('categorycontroller/categories', 'CategoryController::index');
@@ -58,6 +76,7 @@ $routes->get('siswa/modules-by-category/(:num)/(:num)', 'SiswaController::getMod
 $routes->get('siswa/library-books/(:num)', 'SiswaController::getLibraryBooks/$1');
 $routes->get('api/siswa/stream-modul/(:segment)', 'SiswaController::streamModul/$1');
 $routes->get('siswa/achievements/(:num)', 'SiswaController::getAchievements/$1');
+$routes->post('siswa/update-profile', 'SiswaController::updateProfile');
 
 $routes->options('auth/register', 'Auth::register');
 $routes->post('auth/register', 'Auth::register');

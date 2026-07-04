@@ -341,9 +341,11 @@ class GuruController extends ResourceController
         ]);
     }
 
+    // ======================================================================
+    // PROSES INPUT/UBAH NILAI TUGAS + TRIGGER OTOMATIS USER PROGRESS & POIN
+    // ======================================================================
     public function gradeSubmission()
     {
-        // Mengizinkan CORS Preflight OPTIONS jika diperlukan
         if ($this->request->getMethod() === 'options') {
             return $this->response->setStatusCode(200);
         }
@@ -355,22 +357,110 @@ class GuruController extends ResourceController
             $submissionId = $json->submission_id;
             $score        = $json->score;
 
-            // Siapkan data pembaruan
             $data = [
                 'score'      => (int) $score,
-                'status'     => 'graded', // Mengubah status menjadi Sudah Dinilai
+                'status'     => 'graded',
                 'updated_at' => date('Y-m-d H:i:s'),
             ];
 
-            // Jalankan query update berdasarkan ID task_submissions
             $updated = $db->table('task_submissions')
                 ->where('id', $submissionId)
                 ->update($data);
 
             if ($updated) {
+                // Tarik info dasar relasi tugas murid
+                $submissionInfo = $db->table('task_submissions ts')
+                    ->select('ts.student_id, t.module_id, m.total_points')
+                    ->join('tasks t', 'ts.task_id = t.id')
+                    ->join('modules m', 't.module_id = m.id', 'left')
+                    ->where('ts.id', $submissionId)
+                    ->get()->getRowArray();
+
+                if ($submissionInfo) {
+                    $studentId   = $submissionInfo['student_id'];
+                    $moduleId    = $submissionInfo['module_id'];
+                    $pointsByMod = (int)($submissionInfo['total_points'] ?? 50);
+
+                    $existingProgress = $db->table('user_progress')
+                        ->where('user_id', $studentId)
+                        ->where('module_id', $moduleId)
+                        ->get()->getRowArray();
+
+                    $modulBaruSelesai = false;
+
+                    if (!$existingProgress) {
+                        $db->table('user_progress')->insert([
+                            'user_id'       => $studentId,
+                            'module_id'     => $moduleId,
+                            'is_completed'  => 1,
+                            'completed_at'  => date('Y-m-d H:i:s'),
+                            'points_earned' => $pointsByMod,
+                            'created_at'    => date('Y-m-d H:i:s'),
+                            'updated_at'    => date('Y-m-d H:i:s')
+                        ]);
+                        $db->query("UPDATE users SET total_points = total_points + ? WHERE id = ?", [$pointsByMod, $studentId]);
+                        $modulBaruSelesai = true;
+
+                    } else if ((int)$existingProgress['is_completed'] === 0) {
+                        $db->table('user_progress')
+                            ->where('id', $existingProgress['id'])
+                            ->update([
+                                'is_completed'  => 1,
+                                'completed_at'  => date('Y-m-d H:i:s'),
+                                'points_earned' => $pointsByMod,
+                                'updated_at'    => date('Y-m-d H:i:s')
+                            ]);
+                        $db->query("UPDATE users SET total_points = total_points + ? WHERE id = ?", [$pointsByMod, $studentId]);
+                        $modulBaruSelesai = true;
+                    }
+
+                    // ======================================================================
+                    // 🔥 EVALUASI BADGE MODUL SECARA OTOMATIS (DINAMIS DARI DATABASE)
+                    // ======================================================================
+                    if ($modulBaruSelesai) {
+                        // Hitung berapa total modul yang sudah diselesaikan oleh anak ini
+                        $totalSelesaiModul = $db->table('user_progress')
+                            ->where(['user_id' => $studentId, 'is_completed' => 1])
+                            ->countAllResults();
+
+                        // 🎯 COCOKKAN LOGIKANYA DI SINI: Menyusun string "finish_module:X"
+                        $modCondition = 'finish_module:' . $totalSelesaiModul;
+
+                        // Cari di tabel achievements apakah ada badge dengan required_condition tersebut
+                        $matchingModBadge = $db->table('achievements')
+                            ->where('required_condition', $modCondition)
+                            ->get()->getRowArray();
+
+                        if ($matchingModBadge) {
+                            $badgeId = (int)$matchingModBadge['id'];
+                            
+                            // Validasi keamanan ekstra agar badge tidak diklaim ganda
+                            $alreadyEarnedBadge = $db->table('user_achievements')
+                                ->where(['user_id' => $studentId, 'achievement_id' => $badgeId])
+                                ->countAllResults();
+                            
+                            if ($alreadyEarnedBadge == 0) {
+                                // Masukkan log perolehan badge anak
+                                $db->table('user_achievements')->insert([
+                                    'user_id'        => $studentId,
+                                    'achievement_id' => $badgeId,
+                                    'earned_at'      => date('Y-m-d H:i:s'),
+                                ]);
+
+                                // Tambahkan reward poin yang tertera di database (id 6 otomatis berbobot 50 poin!)
+                                $bonusPoints = (int)($matchingModBadge['points_reward'] ?? 0);
+                                if ($bonusPoints > 0) {
+                                    $db->query("UPDATE users SET total_points = total_points + ? WHERE id = ?", [$bonusPoints, $studentId]);
+                                }
+                            }
+                        }
+                    }
+                    // ======================================================================
+                }
+
                 return $this->respond([
                     'status'  => 200,
-                    'message' => 'Nilai berhasil disimpan!',
+                    'message' => 'Nilai berhasil disimpan & progres belajar siswa diperbarui!',
                 ], 200);
             }
 
@@ -622,6 +712,40 @@ class GuruController extends ResourceController
             'status'  => 201,
             'message' => 'Hore! E-Book berhasil diunggah dan disimpan!',
         ], 201);
+    }
+
+    // ======================================================================
+    // UPDATE DATA PROFIL DARI SISI HALAMAN GURU
+    // ======================================================================
+    public function updateProfile()
+    {
+        header("Access-Control-Allow-Origin: *");
+        header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With");
+        header("Access-Control-Allow-Methods: POST, OPTIONS");
+
+        if ($this->request->getMethod() === 'options') {
+            return $this->response->setStatusCode(200);
+        }
+
+        $id       = $this->request->getPost('id');
+        $email    = $this->request->getPost('email');
+        $password = $this->request->getPost('password');
+
+        if (!$id || !$email || !$password) {
+            return $this->fail('Parameter pembaruan profil guru tidak lengkap!', 400);
+        }
+
+        $db = \Config\Database::connect();
+        $db->table('users')->where('id', $id)->update([
+            'email'      => $email,
+            'password'   => $password, // Format plain text sesuai setup DB kamu
+            'updated_at' => date('Y-m-d H:i:s'),
+        ]);
+
+        return $this->respond([
+            'status'  => 200,
+            'message' => 'Profil guru berhasil diperbarui',
+        ], 200);
     }
 
 }

@@ -222,54 +222,73 @@ class SiswaController extends BaseController
         $ebookId    = $this->request->getPost('ebook_id');
         $lastPage   = $this->request->getPost('last_page');
         $totalPages = $this->request->getPost('total_pages');
-
-        // --- TAMBAHAN BARU: Menangkap durasi (dalam menit) ---
-        $duration = (int) $this->request->getPost('reading_duration');
+        $duration   = (int) $this->request->getPost('reading_duration');
 
         $isFinished = ($lastPage >= $totalPages) ? 1 : 0;
 
-        // Cek apakah anak sudah pernah membaca buku ini
         $existing = $db->table('ebook_reading_logs')
             ->where(['user_id' => $studentId, 'ebook_id' => $ebookId])
             ->get()->getRow();
 
-        if ($existing) {
-            // Jika sudah pernah, tambahkan (akumulasikan) waktu baca lama + sesi baru
-            $newDuration = $existing->reading_duration + $duration;
+        $baruPertamaTamat = false;
 
+        if ($existing) {
+            if ((int)$existing->is_finished === 0 && $isFinished === 1) {
+                $baruPertamaTamat = true;
+            }
+
+            $newDuration = $existing->reading_duration + $duration;
             $data = [
                 'last_page'        => $lastPage,
                 'is_finished'      => $isFinished,
-                'reading_duration' => $newDuration, // Simpan total waktu ke DB
+                'reading_duration' => $newDuration,
                 'last_read_at'     => date('Y-m-d H:i:s'),
             ];
             $db->table('ebook_reading_logs')->where('id', $existing->id)->update($data);
         } else {
-            // Jika ini pertama kali anak membaca buku ini
+            if ($isFinished === 1) {
+                $baruPertamaTamat = true;
+            }
+
             $data = [
                 'user_id'          => $studentId,
                 'ebook_id'         => $ebookId,
                 'last_page'        => $lastPage,
                 'is_finished'      => $isFinished,
-                'reading_duration' => $duration, // Simpan waktu perdana
+                'reading_duration' => $duration,
                 'last_read_at'     => date('Y-m-d H:i:s'),
                 'started_at'       => date('Y-m-d H:i:s'),
             ];
             $db->table('ebook_reading_logs')->insert($data);
         }
 
-        // ================= LOGIKA UTAMA PEMBAGIAN POIN MEMBACA =================
-        if ($isFinished == 1) {
+        // ======================================================================
+        // 🔥 EVALUASI POIN & BADGE E-BOOK SECARA OTOMATIS (DINAMIS)
+        // ======================================================================
+        if ($baruPertamaTamat) {
+            // Hadiah poin reguler selesai membaca e-book
+            $poinPerBuku = 20; 
+            $db->query("UPDATE users SET total_points = total_points + ? WHERE id = ?", [$poinPerBuku, $studentId]);
+
+            // Hitung akumulasi total buku cerita yang sudah diselesaikan anak
             $totalFinishedEbooks = $db->table('ebook_reading_logs')
                 ->where(['user_id' => $studentId, 'is_finished' => 1])
                 ->countAllResults();
 
-            if ($totalFinishedEbooks == 1) {
-                $this->triggerBadgeReward($studentId, 1);
-            } else if ($totalFinishedEbooks == 5) {
-                $this->triggerBadgeReward($studentId, 2);
+            // 🎯 COCOKKAN LOGIKANYA DI SINI: Menyusun string "finish_ebook:X"
+            $targetCondition = 'finish_ebook:' . $totalFinishedEbooks;
+
+            // Cari badge yang memiliki syarat sesuai kondisi saat ini di database
+            $matchingBadge = $db->table('achievements')
+                ->where('required_condition', $targetCondition)
+                ->get()->getRowArray();
+
+            // Jika lencana pencapaian ditemukan di database, jalankan pencairan reward
+            if ($matchingBadge) {
+                $this->triggerBadgeReward($studentId, (int)$matchingBadge['id']);
             }
         }
+        // ======================================================================
 
         return $this->respond(['status' => 200, 'message' => 'Progress baca berhasil disimpan']);
     }
@@ -284,11 +303,21 @@ class SiswaController extends BaseController
             ->countAllResults();
 
         if ($alreadyEarned == 0) {
+            // 1. Ambil nilai points_reward dari tabel achievements terlebih dahulu
+            $achievement  = $db->table('achievements')->where('id', $achievementId)->get()->getRow();
+            $pointsReward = $achievement ? (int) $achievement->points_reward : 0;
+
+            // 2. Masukkan log ke tabel user_achievements
             $db->table('user_achievements')->insert([
                 'user_id'        => $studentId,
                 'achievement_id' => $achievementId,
                 'earned_at'      => date('Y-m-d H:i:s'),
             ]);
+
+            // 3. 🔥 SINKRONISASI UTAMA: Suntik poin bonus badge ke kolom total_points tabel users!
+            if ($pointsReward > 0) {
+                $db->query("UPDATE users SET total_points = total_points + ? WHERE id = ?", [$pointsReward, $studentId]);
+            }
         }
     }
 
@@ -323,32 +352,19 @@ class SiswaController extends BaseController
     {
         $db = \Config\Database::connect();
 
-        // 1. Hitung total poin dasar dari riwayat pengerjaan modul (user_progress)
-        $progressPoints = $db->table('user_progress')
-            ->where('user_id', $studentId)
-            ->where('is_completed', 1)
-            ->selectSum('points_earned')
-            ->get()->getRow()->points_earned ?? 0;
+        // 1. 🔥 BACA LANGSUNG dari pusat data kolom total_points di tabel users
+        $user        = $db->table('users')->where('id', $studentId)->get()->getRow();
+        $totalPoints = $user ? (int) $user->total_points : 0;
 
-        // 2. Hitung total poin bonus dari badge yang berhasil dibuka (user_achievements)
-        $achievementPoints = $db->table('user_achievements ua')
-            ->join('achievements a', 'ua.achievement_id = a.id')
-            ->where('ua.user_id', $studentId)
-            ->selectSum('a.points_reward')
-            ->get()->getRow()->points_reward ?? 0;
-
-        // 3. Hitung berapa jumlah badge yang dimiliki anak
+        // 2. Hitung berapa jumlah badge yang dimiliki anak seperti biasa
         $totalBadges = $db->table('user_achievements')
             ->where('user_id', $studentId)
             ->countAllResults();
 
-        // Total poin adalah gabungan poin aktivitas + poin bonus badge
-        $totalPoints = $progressPoints + $achievementPoints;
-
         return $this->respond([
             'status' => 200,
             'data'   => [
-                'total_poin'  => (int) $totalPoints,
+                'total_poin'  => $totalPoints, // 🌟 Otomatis sinkron dan akurat dengan Admin
                 'total_badge' => (int) $totalBadges,
                 'hari_streak' => 5, // Bisa dibuat dinamis nanti jika tabel log login sudah ada
             ],
@@ -516,5 +532,36 @@ class SiswaController extends BaseController
             'status' => 200,
             'data'   => $achievements,
         ]);
+    }
+
+    public function updateProfile()
+    {
+        header("Access-Control-Allow-Origin: *");
+        header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With");
+        header("Access-Control-Allow-Methods: POST, OPTIONS");
+
+        if ($this->request->getMethod() === 'options') {
+            return $this->response->setStatusCode(200);
+        }
+
+        $id       = $this->request->getPost('id');
+        $email    = $this->request->getPost('email');
+        $password = $this->request->getPost('password');
+
+        if (! $id || ! $email || ! $password) {
+            return $this->fail('Parameter tidak lengkap!', 400);
+        }
+
+        $db = \Config\Database::connect();
+        $db->table('users')->where('id', $id)->update([
+            'email'      => $email,
+            'password'   => $password, // Mengikuti plain text database kamu
+            'updated_at' => date('Y-m-d H:i:s'),
+        ]);
+
+        return $this->respond([
+            'status'  => 200,
+            'message' => 'Profil siswa berhasil diperbarui',
+        ], 200);
     }
 }
