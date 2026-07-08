@@ -26,6 +26,16 @@ $routes->group('api', function ($routes) {
 
     $routes->get('dashboard/getSystemReport', 'Dashboard::getSystemReport');
 
+    $routes->get('dashboard/pending-users', 'Dashboard::getPendingUsers');
+    $routes->post('dashboard/verify-user', 'Dashboard::verifyUser');
+    $routes->options('dashboard/verify-user', 'Dashboard::verifyUser');
+
+    // Manajemen Achievements CRUD (Admin)
+    $routes->get('dashboard/achievements', 'Dashboard::getAchievements');
+    $routes->post('dashboard/addAchievement', 'Dashboard::addAchievement');
+    $routes->post('dashboard/updateAchievement', 'Dashboard::updateAchievement');
+    $routes->post('dashboard/deleteAchievement', 'Dashboard::deleteAchievement');
+
     //Guru
     $routes->get('gurucontroller/guru-stats', 'GuruController::guruStats');
     $routes->post('gurucontroller/add-student', 'GuruController::addStudent');
@@ -51,6 +61,7 @@ $routes->group('api', function ($routes) {
     $routes->post('gurucontroller/upload-ebook', 'GuruController::uploadEbook');
     $routes->options('gurucontroller/upload-ebook', 'GuruController::uploadEbook');
     $routes->post('gurucontroller/update-profile', 'GuruController::updateProfile');
+    $routes->get('gurucontroller/my-ebooks/(:num)', 'GuruController::getGuruEbooks/$1');
 
     //ortu
     $routes->get('ortucontroller/child-reading/(:num)', 'OrtuController::getChildActiveReading/$1');
