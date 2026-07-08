@@ -40,25 +40,24 @@ class Auth extends ResourceController
     }
 
     // ─────────────────────────────────────────────────
-    // REGISTER — dipanggil dari register_screen.dart
+    // REGISTER — dipanggil dari register_screen.dart (Lama)
     // ─────────────────────────────────────────────────
     public function register()
     {
-        // Handle preflight CORS
         if ($this->request->getMethod() === 'options') {
             return $this->jsonResponse([], 200);
         }
 
         try {
-            $name     = $this->getInput('name');
-            $email    = $this->getInput('email');
-            $password = $this->getInput('password');
-            $role     = $this->getInput('role', 'child');
-            $nip      = $this->getInput('nip');
-            $subject  = $this->getInput('subject_specialization');
-            $bio      = $this->getInput('bio');
+            $name       = $this->getInput('name');
+            $email      = $this->getInput('email');
+            $password   = $this->getInput('password');
+            $role       = $this->getInput('role', 'child');
+            $nip        = $this->getInput('nip');
+            $subject    = $this->getInput('subject_specialization');
+            $bio        = $this->getInput('bio');
             $classGrade = $this->getInput('class_grade');
-            // Validasi wajib
+
             if (empty($name) || empty($email) || empty($password)) {
                 return $this->jsonResponse([
                     'status'   => 400,
@@ -66,7 +65,6 @@ class Auth extends ResourceController
                 ], 400);
             }
 
-            // Validasi format email sederhana
             if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
                 return $this->jsonResponse([
                     'status'   => 400,
@@ -74,7 +72,6 @@ class Auth extends ResourceController
                 ], 400);
             }
 
-            // Validasi NIP wajib untuk Guru
             if ($role === 'guru' && empty($nip)) {
                 return $this->jsonResponse([
                     'status'   => 400,
@@ -84,7 +81,6 @@ class Auth extends ResourceController
 
             $db = \Config\Database::connect();
 
-            // Cek duplikat email
             $exists = $db->table('users')->where('email', $email)->get()->getRowArray();
             if ($exists) {
                 return $this->jsonResponse([
@@ -93,15 +89,12 @@ class Auth extends ResourceController
                 ], 400);
             }
 
-            // Insert ke tabel users
-            // Catatan: password masih plain-text sesuai skema DB saat ini
-            // TODO: ganti dengan password_hash($password, PASSWORD_DEFAULT) 
-            //       saat tabel siap untuk production
             $db->table('users')->insert([
-                'name'     => $name,
-                'email'    => $email,
-                'password' => $password,
-                'role'     => $role,
+                'name'        => $name,
+                'email'       => $email,
+                'password'    => $password,
+                'role'        => $role,
+                'is_verified' => 0, // 🔥 Default 0 sebelum di-ACC Admin
             ]);
 
             $newUserId = $db->insertID();
@@ -113,7 +106,6 @@ class Auth extends ResourceController
                 ], 500);
             }
 
-            // Jika Guru → insert ke teacher_profiles
             if ($role === 'guru') {
                 $db->table('teacher_profiles')->insert([
                     'user_id'                => $newUserId,
@@ -136,7 +128,6 @@ class Auth extends ResourceController
             ], 201);
 
         } catch (\Exception $e) {
-            // Tangkap semua error agar Flutter tidak menerima HTML error page
             return $this->jsonResponse([
                 'status'  => 500,
                 'message' => 'Server error: ' . $e->getMessage()
@@ -144,10 +135,10 @@ class Auth extends ResourceController
         }
     }
 
-    // ─────────────────────────────────────────────────
-    // REGISTER VIA LOGIN PAGE (register_page.dart)
-    // Role: child / parent — tidak ada field guru
-    // ─────────────────────────────────────────────────
+    // ──────────────────────────────────────────────────────────────────────
+    // 🔥 BAGIAN UTAMA YANG DIPERBAIKI: REGISTER VIA LOGIN PAGE (register_page.dart)
+    // Kini mendukung pendaftaran role Guru lengkap dengan verifikasi Admin
+    // ──────────────────────────────────────────────────────────────────────
     public function register_via_login()
     {
         if ($this->request->getMethod() === 'options') {
@@ -159,6 +150,15 @@ class Auth extends ResourceController
             $email    = $this->getInput('email');
             $password = $this->getInput('password');
             $role     = $this->getInput('role', 'child');
+
+            // 🌟 AMBIL PARAMETER LENGKAP: Orang Tua & Guru dari pendaftaran mandiri anak
+            $parentId   = $this->getInput('parent_id');
+            $guruId     = $this->getInput('guru_id'); // 🔥 Tambahan untuk menangkap ID Guru
+            
+            $nip        = $this->getInput('nip');
+            $subject    = $this->getInput('subject_specialization');
+            $classGrade = $this->getInput('class_grade');
+            $bio        = $this->getInput('bio');
 
             if (empty($name) || empty($email) || empty($password)) {
                 return $this->jsonResponse([
@@ -174,6 +174,13 @@ class Auth extends ResourceController
                 ], 400);
             }
 
+            if ($role === 'guru' && empty($nip)) {
+                return $this->jsonResponse([
+                    'status'   => 400,
+                    'messages' => ['error' => 'NIP wajib disertakan untuk registrasi akun Guru.']
+                ], 400);
+            }
+
             $db = \Config\Database::connect();
 
             $exists = $db->table('users')->where('email', $email)->get()->getRowArray();
@@ -184,18 +191,32 @@ class Auth extends ResourceController
                 ], 400);
             }
 
+            // 🌟 SINKRONISASI COUPLING: Masukkan parent_id DAN guru_id murni jika yang daftar adalah Anak
             $db->table('users')->insert([
-                'name'     => $name,
-                'email'    => $email,
-                'password' => $password,
-                'role'     => $role,
+                'name'        => $name,
+                'email'       => $email,
+                'password'    => $password,
+                'role'        => $role,
+                'parent_id'   => $role === 'child' ? (!empty($parentId) ? (int)$parentId : null) : null,
+                'guru_id'     => $role === 'child' ? (!empty($guruId) ? (int)$guruId : null) : null, // 🔥 Tersimpan aman di MySQL!
+                'is_verified' => 0, 
             ]);
 
             $newUserId = $db->insertID();
 
+            if ($role === 'guru' && $newUserId) {
+                $db->table('teacher_profiles')->insert([
+                    'user_id'                => $newUserId,
+                    'nip'                    => $nip,
+                    'subject_specialization' => $subject,
+                    'bio'                    => $bio,
+                    'class_grade'            => $classGrade,
+                ]);
+            }
+
             return $this->jsonResponse([
                 'status'  => 201,
-                'message' => 'Registrasi berhasil!',
+                'message' => 'Registrasi akun berhasil! Menunggu verifikasi dari pihak Admin.',
                 'data'    => [
                     'id'    => $newUserId,
                     'name'  => $name,
@@ -213,51 +234,49 @@ class Auth extends ResourceController
     }
 
     // ─────────────────────────────────────────────────
-    // LOGIN
+    // LOGIN — FORMAT PESAN DINAMIS & TERPROTEKSI AMAN
     // ─────────────────────────────────────────────────
     public function login()
     {
-        if ($this->request->getMethod() === 'options') {
-            return $this->jsonResponse([], 200);
+        // Mendukung input JSON maupun Form-Data secara fleksibel
+        $email    = $this->getInput('email');
+        $password = $this->getInput('password');
+
+        if (empty($email) || empty($password)) {
+            return $this->jsonResponse([
+                'status' => 400,
+                'error'  => 'Email dan Password wajib diisi!'
+            ], 400);
         }
 
-        try {
-            $email    = $this->getInput('email');
-            $password = $this->getInput('password');
+        $db   = \Config\Database::connect();
+        $user = $db->table('users')->where('email', $email)->get()->getRowArray();
 
-            if (empty($email) || empty($password)) {
-                return $this->jsonResponse([
-                    'status'   => 400,
-                    'messages' => ['error' => 'Email dan Password wajib diisi.']
-                ], 400);
-            }
+        if ($user) {
+            // 1. Cek kecocokan password
+            if ($user['password'] === $password) {
+                
+                // 2. 🔥 JIKA BELUM DIVALIDASI ADMIN: Kirim status 403 & pesan edukatif
+                if ((int)$user['is_verified'] === 0) {
+                    return $this->jsonResponse([
+                        'status' => 403,
+                        'error'  => 'Akun Anda belum aktif! Silakan tunggu verifikasi dan persetujuan dari Admin BelajarIn.'
+                    ], 403);
+                }
 
-            $db   = \Config\Database::connect();
-            $user = $db->table('users')->where('email', $email)->get()->getRowArray();
-
-            if ($user && $user['password'] === $password) {
+                // 3. Jika lolos verifikasi, kirim data sukses
                 return $this->jsonResponse([
                     'status'  => 200,
-                    'message' => 'Login berhasil',
-                    'data'    => [
-                        'id'    => $user['id'],
-                        'name'  => $user['name'],
-                        'email' => $user['email'],
-                        'role'  => $user['role'],
-                    ]
+                    'message' => 'Login Berhasil!',
+                    'data'    => $user
                 ], 200);
             }
-
-            return $this->jsonResponse([
-                'status'   => 401,
-                'messages' => ['error' => 'Email atau password salah.']
-            ], 401);
-
-        } catch (\Exception $e) {
-            return $this->jsonResponse([
-                'status'  => 500,
-                'message' => 'Server error: ' . $e->getMessage()
-            ], 500);
         }
+
+        // 4. JIKA EMAIL/PASSWORD SALAH: Kirim status 401 & pesan peringatan
+        return $this->jsonResponse([
+            'status' => 401,
+            'error'  => 'Email atau Password salah!'
+        ], 401);
     }
 }
