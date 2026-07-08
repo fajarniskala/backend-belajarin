@@ -9,7 +9,6 @@ class OrtuController extends BaseController
 
     public function dashboard($parentId = null)
     {
-        // 1. Izinkan akses CORS untuk Flutter
         header("Access-Control-Allow-Origin: *");
         header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With");
         header("Access-Control-Allow-Methods: GET, OPTIONS");
@@ -24,16 +23,17 @@ class OrtuController extends BaseController
             return $this->fail('Parameter parent_id diperlukan', 400);
         }
 
-        // 2. Cari data anak
-        $child = $db->table('users')
+        // 🌟 1. AMBIL SEMUA ANAK YANG TERIKAT DENGAN ORANG TUA INI
+        $children = $db->table('users')
+            ->select('id, name')
             ->where('parent_id', $parentId)
             ->where('role', 'child')
-            ->get()->getRowArray();
+            ->get()->getResultArray();
 
-        if (! $child) {
+        if (empty($children)) {
             return $this->respond([
                 'status'       => 200,
-                'child_name'   => 'Anak',
+                'children'     => [],
                 'stats'        => [
                     'buku_selesai'  => 0,
                     'sedang_dibaca' => 0,
@@ -44,9 +44,27 @@ class OrtuController extends BaseController
             ]);
         }
 
-        $childId = $child['id'];
+        // 🌟 2. TENTUKAN ANAK MANA YANG SEDANG DIPILIH (DARI QUERY PARAMETER FLUTTER)
+        $selectedChildId = $this->request->getGet('child_id');
+        $currentChild    = null;
 
-        // 3. STATISTIK BUKU
+        if ($selectedChildId) {
+            foreach ($children as $c) {
+                if ((int) $c['id'] === (int) $selectedChildId) {
+                    $currentChild = $c;
+                    break;
+                }
+            }
+        }
+
+        // Jika tidak memilih atau ID tidak valid, default ke anak pertama
+        if (! $currentChild) {
+            $currentChild = $children[0];
+        }
+
+        $childId = $currentChild['id'];
+
+        // 3. STATISTIK BUKU (Gunakan $childId milik anak yang dipilih)
         $bukuSelesai = $db->table('ebook_reading_logs')
             ->where('user_id', $childId)
             ->where('is_finished', 1)
@@ -57,7 +75,6 @@ class OrtuController extends BaseController
             ->where('is_finished', 0)
             ->countAllResults();
 
-        // [PENTING] AMAN DARI ERROR NULL
         $durasiRow = $db->table('ebook_reading_logs')
             ->where('user_id', $childId)
             ->selectSum('reading_duration')
@@ -68,7 +85,6 @@ class OrtuController extends BaseController
         $menit        = $totalMenit % 60;
         $durasiFormat = ($jam > 0) ? "{$jam}j {$menit}m" : "{$menit}m";
 
-        // [PENTING] AMAN DARI ERROR NULL
         $progRow = $db->table('user_progress')
             ->where('user_id', $childId)
             ->where('is_completed', 1)
@@ -87,7 +103,7 @@ class OrtuController extends BaseController
 
         // 4. RIWAYAT BACAAN
         $readingLogs = $db->table('ebook_reading_logs erl')
-            ->select('erl.id, erl.ebook_id, erl.last_page, erl.reading_duration, erl.last_read_at, erl.is_finished, b.title, b.total_pages')
+            ->select('erl.id, erl.ebook_id, erl.last_page, erl.reading_duration, erl.last_read_at, erl.is_finished, b.title, b.author, b.total_pages')
             ->join('ebooks b', 'erl.ebook_id = b.id')
             ->where('erl.user_id', $childId)
             ->orderBy('erl.last_read_at', 'DESC')
@@ -95,7 +111,9 @@ class OrtuController extends BaseController
 
         return $this->respond([
             'status'       => 200,
-            'child_name'   => $child['name'],
+            'child_name'   => $currentChild['name'],
+            'selected_id'  => (int) $childId,
+            'children'     => $children, // 🌟 Kirim daftar semua anak ke Flutter
             'stats'        => [
                 'buku_selesai'  => (int) $bukuSelesai,
                 'sedang_dibaca' => (int) $sedangDibaca,
@@ -122,11 +140,26 @@ class OrtuController extends BaseController
             return $this->fail('Parameter parent_id diperlukan', 400);
         }
 
-        // 1. Cari data anak
-        $child = $db->table('users')
-            ->where('parent_id', $parentId)
-            ->where('role', 'child')
-            ->get()->getRowArray();
+        // 🌟 1. AMBIL PARAMETER CHILD_ID DARI GET REQUEST FLUTTER
+        $selectedChildId = $this->request->getGet('child_id');
+        $child           = null;
+
+        if ($selectedChildId) {
+            // Jika ada child_id dikirim, cari anak spesifik tersebut
+            $child = $db->table('users')
+                ->where('id', $selectedChildId)
+                ->where('parent_id', $parentId)
+                ->where('role', 'child')
+                ->get()->getRowArray();
+        }
+
+        // Jika child_id kosong atau data tidak valid, default ambil anak pertama
+        if (! $child) {
+            $child = $db->table('users')
+                ->where('parent_id', $parentId)
+                ->where('role', 'child')
+                ->get()->getRowArray();
+        }
 
         if (! $child) {
             return $this->respond([
@@ -140,9 +173,9 @@ class OrtuController extends BaseController
 
         $childId = $child['id'];
 
-        // 2. Ambil Semua Riwayat Bacaan Anak
+        // 2. Ambil Semua Riwayat Bacaan Anak (Tambahkan e.author sekalian agar lengkap)
         $riwayat = $db->table('ebook_reading_logs erl')
-            ->select('erl.*, e.title, e.total_pages')
+            ->select('erl.*, e.title, e.author, e.total_pages') // 🌟 Tambahkan e.author
             ->join('ebooks e', 'erl.ebook_id = e.id')
             ->where('erl.user_id', $childId)
             ->orderBy('erl.last_read_at', 'DESC')

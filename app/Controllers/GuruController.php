@@ -87,6 +87,7 @@ class GuruController extends ResourceController
         $parents = $db->table('users')
             ->select('id, name, email')
             ->where('role', 'parent')
+            ->where('is_verified', 1)
             ->get()
             ->getResultArray();
 
@@ -746,6 +747,35 @@ class GuruController extends ResourceController
             'status'  => 200,
             'message' => 'Profil guru berhasil diperbarui',
         ], 200);
+    }
+
+    // ======================================================================
+    // AMBIL DAFTAR E-BOOK YANG DIUPLOAD OLEH GURU INI (READ)
+    // ======================================================================
+    public function getGuruEbooks($guruId = null)
+    {
+        header("Access-Control-Allow-Origin: *");
+        header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With");
+        header("Access-Control-Allow-Methods: GET");
+
+        $db = \Config\Database::connect();
+
+        if (!$guruId) {
+            return $this->fail('Parameter guru_id diperlukan', 400);
+        }
+
+        $ebooks = $db->table('ebooks e')
+            ->select('e.id, e.title, e.author, e.total_pages, e.description, c.name as category_name')
+            ->join('categories c', 'e.category_id = c.id', 'left')
+            ->where('e.uploaded_by', $guruId)
+            ->where('e.is_active', 1)
+            ->orderBy('e.id', 'DESC')
+            ->get()->getResultArray();
+
+        return $this->respond([
+            'status' => 200,
+            'data'   => $ebooks,
+        ]);
     }
 
 }
