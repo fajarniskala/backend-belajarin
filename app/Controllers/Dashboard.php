@@ -66,7 +66,7 @@ class Dashboard extends ResourceController
 
         $db = \Config\Database::connect();
         // Ambil data dari tabel users yang rolenya murni 'guru'
-        $teachers = $db->table('users')->where('role', 'guru')->orderBy('id', 'DESC')->get()->getResultArray();
+        $teachers = $db->table('users')->where('role', 'guru')->where('is_verified', 1)->orderBy('id', 'DESC')->get()->getResultArray();
 
         return $this->respond([
             'status' => 200,
@@ -394,6 +394,202 @@ class Dashboard extends ResourceController
             'status'  => 200,
             'message' => 'Berhasil memuat laporan analitik sistem',
             'data'    => $data,
+        ], 200);
+    }
+
+    // ======================================================================
+    // 1. AMBIL SEMUA USER YANG BELUM DIVERIFIKASI (is_verified = 0)
+    // ======================================================================
+    public function getPendingUsers()
+    {
+        header("Access-Control-Allow-Origin: *");
+        header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With");
+        header("Access-Control-Allow-Methods: GET");
+
+        $db = \Config\Database::connect();
+
+        // Ambil semua akun yang status verifikasinya masih 0
+        $pendingUsers = $db->table('users')
+            ->select('id, name, email, role, created_at')
+            ->where('is_verified', 0)
+            ->orderBy('created_at', 'DESC')
+            ->get()
+            ->getResultArray();
+
+        return $this->respond([
+            'status' => 200,
+            'data'   => $pendingUsers,
+        ], 200);
+    }
+
+    // ======================================================================
+    // 2. PROSES ACC ATAU TOLAK PENDAFTARAN AKUN MANDIRI
+    // ======================================================================
+    public function verifyUser()
+    {
+        header("Access-Control-Allow-Origin: *");
+        header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With");
+        header("Access-Control-Allow-Methods: POST, OPTIONS");
+
+        if ($this->request->getMethod() === 'options') {
+            return $this->response->setStatusCode(200);
+        }
+
+        $json = $this->request->getJSON();
+
+        if ($json && isset($json->id) && isset($json->action)) {
+            $userId = $json->id;
+            $action = $json->action; // Menerima nilai 'approve' atau 'reject'
+
+            $db = \Config\Database::connect();
+
+            if ($action === 'approve') {
+                // Jika disetujui, ubah nilai is_verified menjadi 1
+                $db->table('users')->where('id', $userId)->update([
+                    'is_verified' => 1,
+                    'updated_at'  => date('Y-m-d H:i:s'),
+                ]);
+                $message = 'Akun berhasil disetujui dan diaktifkan!';
+            } else {
+                // Jika ditolak, hapus data user tersebut dari database demi menghemat storage
+                $db->table('users')->where('id', $userId)->delete();
+                $message = 'Pendaftaran akun berhasil ditolak dan dihapus.';
+            }
+
+            return $this->respond([
+                'status'  => 200,
+                'message' => $message,
+            ], 200);
+        }
+
+        return $this->fail('Data pengiriman tidak valid atau parameter kurang!', 400);
+    }
+
+    // ======================================================================
+    // 1. AMBIL SEMUA DATA PENCAPAIAN / ACHIEVEMENT (READ)
+    // ======================================================================
+    public function getAchievements()
+    {
+        header("Access-Control-Allow-Origin: *");
+        header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With");
+        header("Access-Control-Allow-Methods: GET, OPTIONS");
+
+        $db = \Config\Database::connect();
+        $achievements = $db->table('achievements')->orderBy('id', 'DESC')->get()->getResultArray();
+
+        return $this->respond([
+            'status' => 200,
+            'data'   => $achievements,
+        ], 200);
+    }
+
+    // ======================================================================
+    // 2. TAMBAH DATA ACHIEVEMENT BARU (CREATE)
+    // ======================================================================
+    public function addAchievement()
+    {
+        header("Access-Control-Allow-Origin: *");
+        header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With");
+        header("Access-Control-Allow-Methods: POST, OPTIONS");
+
+        if ($this->request->getMethod() === 'options') {
+            return $this->response->setStatusCode(200);
+        }
+
+        $title             = $this->request->getPost('title');
+        $description       = $this->request->getPost('description');
+        $icon              = $this->request->getPost('icon') ?? 'icon_star.png';
+        $badgeImage        = $this->request->getPost('badge_image') ?? 'badge_diligent.png';
+        $requiredCondition = $this->request->getPost('required_condition');
+        $pointsReward      = $this->request->getPost('points_reward');
+
+        if (!$title || !$requiredCondition) {
+            return $this->fail('Judul pencapaian dan Syarat Kondisi wajib diisi!', 400);
+        }
+
+        $db = \Config\Database::connect();
+        $db->table('achievements')->insert([
+            'title'              => $title,
+            'description'        => $description,
+            'icon'               => $icon,
+            'badge_image'        => $badgeImage,
+            'required_condition' => $requiredCondition,
+            'points_reward'      => (int) $pointsReward,
+            'created_at'         => date('Y-m-d H:i:s'),
+        ]);
+
+        return $this->respond([
+            'status'  => 200,
+            'message' => 'Achievement baru berhasil ditambahkan!',
+        ], 200);
+    }
+
+    // ======================================================================
+    // 3. UBAH DATA ACHIEVEMENT (UPDATE)
+    // ======================================================================
+    public function updateAchievement()
+    {
+        header("Access-Control-Allow-Origin: *");
+        header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With");
+        header("Access-Control-Allow-Methods: POST, OPTIONS");
+
+        if ($this->request->getMethod() === 'options') {
+            return $this->response->setStatusCode(200);
+        }
+
+        $id                = $this->request->getPost('id');
+        $title             = $this->request->getPost('title');
+        $description       = $this->request->getPost('description');
+        $icon              = $this->request->getPost('icon');
+        $badgeImage        = $this->request->getPost('badge_image');
+        $requiredCondition = $this->request->getPost('required_condition');
+        $pointsReward      = $this->request->getPost('points_reward');
+
+        if (!$id || !$title || !$requiredCondition) {
+            return $this->fail('Data pembaruan lencana tidak lengkap!', 400);
+        }
+
+        $db = \Config\Database::connect();
+        $db->table('achievements')->where('id', $id)->update([
+            'title'              => $title,
+            'description'        => $description,
+            'icon'               => $icon,
+            'badge_image'        => $badgeImage,
+            'required_condition' => $requiredCondition,
+            'points_reward'      => (int) $pointsReward,
+        ]);
+
+        return $this->respond([
+            'status'  => 200,
+            'message' => 'Data lencana achievement berhasil diperbarui',
+        ], 200);
+    }
+
+    // ======================================================================
+    // 4. HAPUS DATA ACHIEVEMENT (DELETE)
+    // ======================================================================
+    public function deleteAchievement()
+    {
+        header("Access-Control-Allow-Origin: *");
+        header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With");
+        header("Access-Control-Allow-Methods: POST, OPTIONS");
+
+        if ($this->request->getMethod() === 'options') {
+            return $this->response->setStatusCode(200);
+        }
+
+        $id = $this->request->getPost('id');
+
+        if (!$id) {
+            return $this->fail('ID lencana tidak ditemukan!', 400);
+        }
+
+        $db = \Config\Database::connect();
+        $db->table('achievements')->where('id', $id)->delete();
+
+        return $this->respond([
+            'status'  => 200,
+            'message' => 'Lencana pencapaian sukses dihapus dari database',
         ], 200);
     }
 }
