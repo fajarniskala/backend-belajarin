@@ -1,4 +1,5 @@
 <?php
+
 namespace App\Controllers;
 
 use CodeIgniter\API\ResponseTrait;
@@ -104,7 +105,6 @@ class SiswaController extends BaseController
                 'status'  => 200,
                 'message' => $message,
             ]);
-
         } catch (\Exception $e) {
             // Tangkap crash crash internal dan kembalikan dalam format JSON agar app Flutter tidak patah
             return $this->response->setStatusCode(500)->setJSON([
@@ -233,12 +233,12 @@ class SiswaController extends BaseController
         $baruPertamaTamat = false;
 
         if ($existing) {
-            if ((int)$existing->is_finished === 0 && $isFinished === 1) {
+            if ((int) $existing->is_finished === 0 && $isFinished === 1) {
                 $baruPertamaTamat = true;
             }
 
             $newDuration = $existing->reading_duration + $duration;
-            $data = [
+            $data        = [
                 'last_page'        => $lastPage,
                 'is_finished'      => $isFinished,
                 'reading_duration' => $newDuration,
@@ -267,7 +267,7 @@ class SiswaController extends BaseController
         // ======================================================================
         if ($baruPertamaTamat) {
             // Hadiah poin reguler selesai membaca e-book
-            $poinPerBuku = 20; 
+            $poinPerBuku = 20;
             $db->query("UPDATE users SET total_points = total_points + ? WHERE id = ?", [$poinPerBuku, $studentId]);
 
             // Hitung akumulasi total buku cerita yang sudah diselesaikan anak
@@ -285,7 +285,7 @@ class SiswaController extends BaseController
 
             // Jika lencana pencapaian ditemukan di database, jalankan pencairan reward
             if ($matchingBadge) {
-                $this->triggerBadgeReward($studentId, (int)$matchingBadge['id']);
+                $this->triggerBadgeReward($studentId, (int) $matchingBadge['id']);
             }
         }
         // ======================================================================
@@ -371,11 +371,16 @@ class SiswaController extends BaseController
         ]);
     }
 
-    public function getSubmitedTasks($studentId)
+    public function getSubmitedTasks($studentId = null) // 🌟 Tambahkan = null agar tidak error jika kosong
     {
         $db = \Config\Database::connect();
 
-        // Mengambil semua jawaban siswa dikombinasikan dengan judul tugasnya
+        // 🌟 Validasi: Jika $studentId kosong, kirim pesan error yang jelas ke Flutter
+        if (! $studentId) {
+            return $this->fail('Parameter student_id tidak diterima oleh server.', 400);
+        }
+
+        // Gunakan query yang lebih eksplisit untuk memastikan join data benar
         $sql = "SELECT ts.id, ts.score, ts.status, ts.submitted_at, t.title
             FROM task_submissions ts
             JOIN tasks t ON ts.task_id = t.id
@@ -384,10 +389,11 @@ class SiswaController extends BaseController
 
         $submissions = $db->query($sql, [$studentId])->getResultArray();
 
+        // Debug: Jika list kosong, kita bisa tahu apakah query yang salah atau ID-nya yang tidak ketemu
         return $this->respond([
             'status' => 200,
-            'data'   => $submissions,
-        ]);
+            'data'   => $submissions, // Jika ini tetap kosong, berarti tidak ada data di tabel task_submissions dengan student_id tersebut
+        ], 200);
     }
 
     public function getAllEbooks($studentId = null)
